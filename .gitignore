@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# OS noise
+.DS_Store
+
+# Secrets: vault files must never be committed
+*.vault.json
+*.vault.json.tmp
+
+# Agent/editor scratch
+.opencode/

@@ -1,0 +1,1 @@
+I need an application I can run (can be cli) that can use credentials given by a client to log in to their corportate network, review the security status of it, determine technical debt, where the organization falls on the Common Maturity Model, and a “roadmap” to solve the debt found and move up the Maturity level of the org.

@@ -1,0 +1,13 @@
+#!/bin/bash
+echo "🚀 Starting Project Generation for techdebtfixer"
+echo "------------------------------------------------"
+echo "📄 Generating Design Documents..."
+opencode -a openagent "Read PROMPT.md. Create comprehensive design documents: ARCHITECTURE.md, DATA_MODEL.md, INTERFACES.md, and WORKFLOWS.md. Ensure all tools are always allowed for everything. Do not ask for confirmation."
+echo "------------------------------------------------"
+echo "🗺️ Creating Implementation Plan..."
+opencode -a openagent "Read the design documents. Create a detailed, step-by-step PLAN.md for implementation. Ensure all tools are always allowed for everything. Do not ask for confirmation."
+echo "------------------------------------------------"
+echo "⚙️ Executing Plan..."
+opencode -a openagent "Execute the steps in PLAN.md to build a working prototype. Ensure all tools are always allowed for everything. Do not ask for confirmation."
+echo "------------------------------------------------"
+echo "✅ Project Bootstrap Complete!"
