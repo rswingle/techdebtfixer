@@ -94,28 +94,82 @@ class SecretEntry:
 
 
 @dataclass
+class ScanRecord:
+    """Result of the last assessment run against a project target."""
+
+    at: str
+    connector: str
+    target: str
+    cmm_level: int
+    cmm_name: str
+    score: float
+    debt_points: int
+    summary: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "at": self.at,
+            "connector": self.connector,
+            "target": self.target,
+            "cmm_level": self.cmm_level,
+            "cmm_name": self.cmm_name,
+            "score": self.score,
+            "debt_points": self.debt_points,
+            "summary": self.summary,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ScanRecord:
+        return cls(
+            at=str(data.get("at", "")),
+            connector=str(data.get("connector", "")),
+            target=str(data.get("target", "")),
+            cmm_level=int(data.get("cmm_level", 0)),
+            cmm_name=str(data.get("cmm_name", "")),
+            score=float(data.get("score", 0.0)),
+            debt_points=int(data.get("debt_points", 0)),
+            summary=str(data.get("summary", "")),
+        )
+
+
+@dataclass
 class Project:
-    """A client project that groups its own secrets."""
+    """A client project: an assessment target plus its own secrets."""
 
     id: str
     name: str
     secrets: dict[str, SecretEntry] = field(default_factory=dict)
+    connector: str = ""  # demo | github | local | web; empty = not configured
+    target: str = ""  # org name, hostname, or filesystem path
+    last_scan: ScanRecord | None = None
     created_at: str = field(default_factory=_now)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "id": self.id,
             "name": self.name,
             "created_at": self.created_at,
+            "connector": self.connector,
+            "target": self.target,
             "secrets": {sid: s.to_dict() for sid, s in self.secrets.items()},
         }
+        if self.last_scan is not None:
+            out["last_scan"] = self.last_scan.to_dict()
+        return out
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Project:
+        last_scan = data.get("last_scan")
         return cls(
             id=str(data["id"]),
             name=str(data["name"]),
             created_at=str(data.get("created_at", _now())),
+            connector=str(data.get("connector", "")),
+            target=str(data.get("target", "")),
+            last_scan=(
+                ScanRecord.from_dict(last_scan) if isinstance(last_scan, dict)
+                else None
+            ),
             secrets={
                 sid: SecretEntry.from_dict(sd)
                 for sid, sd in data.get("secrets", {}).items()
@@ -426,6 +480,24 @@ class Vault:
 
     def rename_project(self, client_id: str, project_id: str, name: str) -> None:
         self.get_project(client_id, project_id).name = name.strip()
+        self.save()
+
+    def set_project_scan_config(
+        self, client_id: str, project_id: str, connector: str, target: str
+    ) -> None:
+        """Attach an assessment target (connector + target id) to a project."""
+        if connector not in {"demo", "github", "local", "web"}:
+            raise VaultError(f"unknown connector: {connector}")
+        project = self.get_project(client_id, project_id)
+        project.connector = connector
+        project.target = target.strip()
+        self.save()
+
+    def record_scan_result(
+        self, client_id: str, project_id: str, scan: ScanRecord
+    ) -> None:
+        """Store the outcome of a completed assessment run."""
+        self.get_project(client_id, project_id).last_scan = scan
         self.save()
 
     def delete_project(self, client_id: str, project_id: str) -> None:

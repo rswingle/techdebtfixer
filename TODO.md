@@ -1,7 +1,7 @@
 # TODO
 
-- [ ] Vault TUI: optional OS-keychain backend; vault export/import for
-  client hand-off; `textual`-driven assessment run view.
+- [ ] Vault TUI: scan history per project (keep multiple ScanRecords);
+  diff two scans to show posture trend; optional OS-keychain backend.
 - [ ] GitHub connector: paginate beyond 100 repos; also check dependabot.yml,
   code scanning alerts and Actions workflow permissions.
 - [ ] Web connector: follow redirects and score cookie flags; check multiple

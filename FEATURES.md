@@ -27,6 +27,10 @@ Implemented in this prototype (Python ≥3.10, stdlib only, zero dependencies):
 - **Rotation reminders** — per-secret rotation policies with overdue /
   due-soon flags in the tree and vault summary; `r` marks a secret rotated
   and saving a new value auto-stamps the rotation date.
-- **Tests**: 43 stdlib `unittest` tests covering scoring, credentials,
+- **Assessments from the TUI** — projects carry a scan target (connector +
+  target id); `a` runs the full assessment pipeline in a background thread
+  and records CMM level, score and debt points on the project; connector
+  tokens are pulled from the project's encrypted secrets.
+- **Tests**: 49 stdlib `unittest` tests covering scoring, credentials,
   roadmap ordering, registry, a full demo end-to-end run, the vault and
   headless TUI flows.

@@ -51,6 +51,8 @@ secrets not attached to any client.
 | `v` | reveal/hide selected secret |
 | `e` | edit selected secret |
 | `r` | mark selected secret as rotated today |
+| `t` | set the scan target for a project (connector + target + optional token) |
+| `a` | assess the selected project against its target |
 | `d` | delete selection (with confirmation) |
 | `l` | lock the vault (re-prompts for the master password) |
 | `?` | help |
@@ -61,6 +63,16 @@ create/edit form). The tree flags secrets with `⚠ overdue` or `⏳ due soon`
 (within 14 days of the due date), and the vault home screen counts them.
 Pressing `r` stamps a secret as rotated today; saving a new value rotates
 it automatically.
+
+## Assessing a project from the TUI
+
+Select a project and press `t` to attach a scan target: a connector
+(`demo`, `github`, `local`, `web`), the target id (org name, hostname or
+path), and an optional API token. Tokens are stored as encrypted project
+secrets and picked up automatically by the `github` connector. Press `a`
+to run the assessment - it executes in a background thread and the result
+(CMM level, score, debt points) is recorded on the project and shown in
+the detail pane.
 
 Secrets render masked (`ghp••••••••xyz`); reveal and clipboard copy are
 explicit actions.

@@ -9,6 +9,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from techdebtfixer.vault import (
+    Project,
+    ScanRecord,
     Vault,
     VaultError,
     rotation_report,
@@ -217,6 +219,65 @@ class RotationTests(unittest.TestCase):
         rebuilt = type(entry).from_dict(raw)
         self.assertEqual(rebuilt.rotate_days, 0)
         self.assertEqual(rebuilt.last_rotated, "")
+
+
+@unittest.skipUnless(HAS_CRYPTO, "cryptography package not installed")
+class ProjectScanConfigTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.vault = Vault(Path(self._tmp.name) / "s.vault.json")
+        self.vault.create("pw")
+        self.client = self.vault.add_client("Acme")
+        self.project = self.vault.add_project(self.client.id, "Core API")
+
+    def test_set_scan_config_roundtrip(self) -> None:
+        self.vault.set_project_scan_config(
+            self.client.id, self.project.id, "github", "acme-org"
+        )
+        again = Vault(self.vault.path)
+        again.unlock("pw")
+        loaded = again.get_project(self.client.id, self.project.id)
+        self.assertEqual(loaded.connector, "github")
+        self.assertEqual(loaded.target, "acme-org")
+        self.assertIsNone(loaded.last_scan)
+
+    def test_set_scan_config_rejects_unknown_connector(self) -> None:
+        with self.assertRaises(VaultError):
+            self.vault.set_project_scan_config(
+                self.client.id, self.project.id, "ftp", "host"
+            )
+
+    def test_record_scan_result_roundtrip(self) -> None:
+        self.vault.set_project_scan_config(
+            self.client.id, self.project.id, "demo", "demo-org"
+        )
+        scan = ScanRecord(
+            at="2026-09-29T12:00:00+00:00",
+            connector="demo",
+            target="demo-org",
+            cmm_level=2,
+            cmm_name="Managed",
+            score=41.2,
+            debt_points=95,
+            summary="CMM L2 Managed (41.2/100)",
+        )
+        self.vault.record_scan_result(self.client.id, self.project.id, scan)
+        again = Vault(self.vault.path)
+        again.unlock("pw")
+        loaded = again.get_project(self.client.id, self.project.id)
+        assert loaded.last_scan is not None
+        self.assertEqual(loaded.last_scan.cmm_level, 2)
+        self.assertEqual(loaded.last_scan.score, 41.2)
+        self.assertIn("L2", loaded.last_scan.summary)
+
+    def test_old_projects_without_scan_fields_load(self) -> None:
+        raw = self.project.to_dict()
+        del raw["connector"], raw["target"]
+        rebuilt = Project.from_dict(raw)
+        self.assertEqual(rebuilt.connector, "")
+        self.assertEqual(rebuilt.target, "")
+        self.assertIsNone(rebuilt.last_scan)
 
 
 class TuiImportTests(unittest.TestCase):

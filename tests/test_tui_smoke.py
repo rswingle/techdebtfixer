@@ -124,6 +124,99 @@ class LockedFlowTests(_AsyncCase):
 
 
 @unittest.skipUnless(HAS_TEXTUAL, "textual not installed")
+class AssessmentFlowTests(_AsyncCase):
+    async def test_set_target_and_run_demo_scan(self) -> None:
+        from textual.widgets import Button
+
+        vault = Vault(self.vault_path)
+        vault.create("pw")
+        client = vault.add_client("Acme")
+        project = vault.add_project(client.id, "Core API")
+        vault.lock()
+
+        app = VaultTui(Vault(self.vault_path))
+        self.addCleanup(app._shutdown)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            screen = app.screen
+            screen.query_one("#pw1", Input).value = "pw"
+            screen.query_one("#go-btn").press()
+            await pilot.pause()
+            self.assertTrue(app.vault.unlocked)
+
+            # Configure the scan target through the modal form.
+            tree = app.query_one("#client-tree")
+            def find(node, text):
+                for child in node.children:
+                    if text in str(child.label):
+                        return child
+                    found = find(child, text)
+                    if found:
+                        return found
+                return None
+            tree.select_node(find(tree.root, "Core API"))
+            await pilot.pause()
+
+            app.action_set_target()
+            await pilot.pause()
+            from textual.widgets import Input as In
+
+            modal = app.screen
+            modal.query_one("#field-connector", In).value = "demo"
+            modal.query_one("#field-target", In).value = "demo-org"
+            modal.query_one("#save-btn", Button).press()
+            await pilot.pause()
+            stored = app.vault.get_project(client.id, project.id)
+            self.assertEqual(stored.connector, "demo")
+            self.assertEqual(stored.target, "demo-org")
+
+            # Run the assessment; the demo connector works offline.
+            app.action_run_assessment()
+            for _ in range(50):  # up to ~5s for the worker thread
+                await pilot.pause(0.1)
+                if app.vault.get_project(client.id, project.id).last_scan:
+                    break
+            scan = app.vault.get_project(client.id, project.id).last_scan
+            self.assertIsNotNone(scan, "scan result was not recorded")
+            self.assertEqual(scan.connector, "demo")
+            self.assertEqual(scan.target, "demo-org")
+            self.assertTrue(1 <= scan.cmm_level <= 5)
+
+    async def test_assess_without_target_warns(self) -> None:
+        vault = Vault(self.vault_path)
+        vault.create("pw")
+        client = vault.add_client("Acme")
+        vault.add_project(client.id, "No Target")
+        vault.lock()
+
+        app = VaultTui(Vault(self.vault_path))
+        self.addCleanup(app._shutdown)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            screen.query_one("#pw1", Input).value = "pw"
+            screen.query_one("#go-btn").press()
+            await pilot.pause()
+
+            tree = app.query_one("#client-tree")
+            def find(node, text):
+                for child in node.children:
+                    if text in str(child.label):
+                        return child
+                    found = find(child, text)
+                    if found:
+                        return found
+                return None
+            tree.select_node(find(tree.root, "No Target"))
+            await pilot.pause()
+            app.action_run_assessment()  # must not raise or push ScanScreen
+            await pilot.pause()
+            from techdebtfixer.tui import ScanScreen
+
+            self.assertNotIsInstance(app.screen, ScanScreen)
+
+
+@unittest.skipUnless(HAS_TEXTUAL, "textual not installed")
 class RotationMarkerTests(_AsyncCase):
     async def test_overdue_marker_appears_in_tree(self) -> None:
         from datetime import datetime, timedelta, timezone

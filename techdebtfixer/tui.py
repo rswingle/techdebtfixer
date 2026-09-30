@@ -9,16 +9,22 @@ Run with: techdebtfixer --tui  (or python -m techdebtfixer.tui)
 
 from __future__ import annotations
 
+import threading
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Header, Input, Label, Static, Tree
 
-from techdebtfixer.credentials import mask_secret
+from techdebtfixer.connectors import get_connector
+from techdebtfixer.credentials import Credentials, mask_secret
+from techdebtfixer.pipeline import run_assessment
+from techdebtfixer.report import render_text
 from techdebtfixer.vault import (
+    ScanRecord,
     Vault,
     VaultError,
     rotation_report,
@@ -118,6 +124,101 @@ class ConfirmModal(ModalScreen[bool]):
         self.dismiss(False)
 
 
+class ScanScreen(ModalScreen[None]):
+    """Runs an assessment against a project target in a background thread."""
+
+    BINDINGS = [Binding("escape", "close", "Close")]
+
+    def __init__(
+        self,
+        client_id: str,
+        project_id: str,
+        connector: str,
+        target: str,
+        token: str = "",
+    ) -> None:
+        super().__init__()
+        self._client_id = client_id
+        self._project_id = project_id
+        self._connector = connector
+        self._target = target
+        self._token = token
+        self._started_at: float = 0.0
+        self._finished = False
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Label(
+                f"Assessing '{self._target}' via {self._connector} connector",
+                classes="modal-title",
+            ),
+            VerticalScroll(Static("starting…", id="scan-status"), id="scan-scroll"),
+            Label("esc closes - the scan keeps running in the background",
+                  classes="hint"),
+            classes="scan-box",
+        )
+
+    def on_mount(self) -> None:
+        import time
+
+        self._started_at = time.monotonic()
+        self.set_interval(0.5, self._tick)
+        thread = threading.Thread(target=self._worker, daemon=True)
+        thread.start()
+
+    def _tick(self) -> None:
+        if self._finished:
+            return
+        import time
+
+        elapsed = int(time.monotonic() - self._started_at)
+        try:
+            self.query_one("#scan-status", Static).update(
+                f"assessing… {elapsed}s elapsed"
+            )
+        except Exception:  # screen already dismissed
+            pass
+
+    def _worker(self) -> None:
+        assessment = None
+        report = None
+        error: Exception | None = None
+        try:
+            connector_cls = get_connector(self._connector)
+            creds = Credentials(token=self._token)
+            connector = connector_cls(creds, self._target)
+            assessment = run_assessment(connector, creds)
+            report = render_text(assessment)
+        except Exception as exc:  # ConnectorError, network errors, anything
+            error = exc
+        app: "VaultTui" = self.app  # type: ignore[assignment]
+        app.call_from_thread(
+            app._on_scan_finished,
+            self._client_id,
+            self._project_id,
+            self._connector,
+            self._target,
+            assessment,
+            report,
+            error,
+        )
+        app.call_from_thread(self._show_result, report, error)
+
+    def _show_result(self, report: str | None, error: Exception | None) -> None:
+        self._finished = True
+        try:
+            status = self.query_one("#scan-status", Static)
+            if error is not None:
+                status.update(f"[b]scan failed[/b]\n\n{error}")
+            elif report is not None:
+                status.update(report)
+        except Exception:
+            pass  # screen was dismissed; the app still records the result
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
 class UnlockScreen(ModalScreen[None]):
     """Master-password entry; doubles as first-run vault creation."""
 
@@ -193,6 +294,10 @@ class VaultTui(App[None]):
     #detail-pane { padding: 0 2; }
     .modal-box { width: 60; margin: 1 2; padding: 1 2; border: solid $accent;
                  background: $surface; }
+    ScanScreen { align: center middle; }
+    .scan-box { width: 90%; height: 90%; padding: 1 2; border: solid $accent;
+                background: $surface; }
+    #scan-scroll { height: 1fr; margin-top: 1; }
     .modal-title { margin-bottom: 1; text-style: bold; }
     .modal-buttons { height: auto; margin-top: 1; }
     .modal-buttons Button { margin-right: 1; }
@@ -211,6 +316,8 @@ class VaultTui(App[None]):
         Binding("v", "toggle_reveal", "Reveal"),
         Binding("e", "edit_secret", "Edit"),
         Binding("r", "mark_rotated", "Rotated"),
+        Binding("a", "run_assessment", "Assess"),
+        Binding("t", "set_target", "Set target"),
         Binding("d", "delete", "Delete"),
         Binding("l", "lock", "Lock vault"),
         Binding("?", "help", "Help"),
@@ -377,7 +484,7 @@ class VaultTui(App[None]):
             "",
             f"file     : {self.vault.path}",
             "",
-            "n new client · p new project · s new secret",
+            "n new client · p new project · s new secret · a assess",
         ]
         self._detail.update("\n".join(lines))
 
@@ -412,7 +519,22 @@ class VaultTui(App[None]):
             f"secrets   : {len(project.secrets)}",
             f"created   : {project.created_at}",
             "",
-            "s new project secret · d delete project",
+            f"connector : {project.connector or '(not set)'}",
+            f"target    : {project.target or '(not set)'}",
+        ]
+        scan = project.last_scan
+        if scan is not None:
+            lines += [
+                "",
+                f"[b]last scan[/b] {scan.at}",
+                f"  CMM L{scan.cmm_level} {scan.cmm_name} - "
+                f"score {scan.score}/100, debt {scan.debt_points} pts",
+            ]
+            if scan.summary:
+                lines.append(f"  {scan.summary}")
+        lines += [
+            "",
+            "a assess · t set target · s new secret · d delete project",
         ]
         self._detail.update("\n".join(lines))
 
@@ -592,6 +714,129 @@ class VaultTui(App[None]):
         self._refresh_detail()
         self.notify(f"'{entry.name}' marked as rotated today")
 
+    # --- assessment -----------------------------------------------------
+
+    def _current_project(self) -> tuple[str, str] | None:
+        data = self._selected()
+        if not data or data.get("kind") != "project":
+            self.notify("select a project first", severity="warning")
+            return None
+        return data["client_id"], data["project_id"]
+
+    def action_set_target(self) -> None:
+        if not self._require_unlocked():
+            return
+        located = self._current_project()
+        if located is None:
+            return
+        client_id, project_id = located
+        project = self.vault.get_project(client_id, project_id)
+        fields = [
+            {
+                "name": "connector",
+                "placeholder": "connector: demo, github, local, web",
+                "default": project.connector or "demo",
+            },
+            {
+                "name": "target",
+                "placeholder": "target: org, hostname or path",
+                "default": project.target,
+            },
+            {
+                "name": "token",
+                "placeholder": "API token (optional, stored as a secret)",
+                "password": True,
+            },
+        ]
+
+        def submit(values: dict[str, str]) -> None:
+            connector = (values.get("connector") or "").strip().lower()
+            target = values.get("target") or ""
+            if connector not in {"demo", "github", "local", "web"}:
+                self.notify(
+                    "connector must be one of: demo, github, local, web",
+                    severity="error",
+                )
+                return
+            if not target:
+                self.notify("target must not be empty", severity="error")
+                return
+            self.vault.set_project_scan_config(client_id, project_id,
+                                                connector, target)
+            token = values.get("token") or ""
+            if token:
+                self.vault.add_secret(
+                    client_id, project_id,
+                    name=f"connector token ({connector})",
+                    kind="token", secret=token,
+                )
+                self.notify("token stored as an encrypted project secret")
+            self._rebuild_tree()
+            self._refresh_detail()
+            self.notify(f"target set: {connector} -> {target}")
+
+        self.push_screen(FormModal(f"Scan target for '{project.name}'", fields,
+                                   submit))
+
+    def action_run_assessment(self) -> None:
+        if not self._require_unlocked():
+            return
+        located = self._current_project()
+        if located is None:
+            return
+        client_id, project_id = located
+        project = self.vault.get_project(client_id, project_id)
+        if not project.connector or not project.target:
+            self.notify("set a target first (key: t)", severity="warning")
+            return
+        token = ""
+        if project.connector == "github":
+            for entry in project.secrets.values():
+                if entry.kind == "token" and entry.secret:
+                    token = entry.secret.decode("utf-8", errors="replace")
+                    break
+        self.push_screen(
+            ScanScreen(client_id, project_id, project.connector, project.target,
+                       token)
+        )
+        self.notify(f"assessing {project.target} via {project.connector}")
+
+    def _on_scan_finished(
+        self,
+        client_id: str,
+        project_id: str,
+        connector: str,
+        target: str,
+        assessment: Any,
+        report: str | None,
+        error: Exception | None,
+    ) -> None:
+        """Runs on the UI thread (via call_from_thread) when a scan ends."""
+        if error is not None:
+            self.notify(f"scan failed: {error}", severity="error")
+            return
+        if assessment is None or assessment.maturity is None:
+            self.notify("scan returned no result", severity="error")
+            return
+        m = assessment.maturity
+        scan = ScanRecord(
+            at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            connector=connector,
+            target=target,
+            cmm_level=m.level.level,
+            cmm_name=m.level.name,
+            score=m.score,
+            debt_points=m.total_debt_points,
+            summary=assessment.summary,
+        )
+        self.vault.record_scan_result(client_id, project_id, scan)
+        self._rebuild_tree()
+        self._refresh_detail()
+        self.notify(
+            f"scan done: CMM L{m.level.level} {m.level.name}, "
+            f"score {m.score}/100"
+        )
+
     def action_edit_secret(self) -> None:
         target = self._current_secret()
         if target is None:
@@ -715,7 +960,7 @@ class VaultTui(App[None]):
     def action_help(self) -> None:
         self.notify(
             "n client · p project · s secret · c copy · v reveal · "
-            "e edit · r mark rotated · d delete · l lock"
+            "e edit · r mark rotated · t set target · a assess · d delete · l lock"
         )
 
     def action_quit(self) -> None:
