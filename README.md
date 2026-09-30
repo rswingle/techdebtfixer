@@ -53,6 +53,7 @@ secrets not attached to any client.
 | `r` | mark selected secret as rotated today |
 | `t` | set the scan target for a project (connector + target + optional token) |
 | `a` | assess the selected project against its target |
+| `h` | show the project's scan history with trend arrows |
 | `d` | delete selection (with confirmation) |
 | `l` | lock the vault (re-prompts for the master password) |
 | `?` | help |
@@ -73,6 +74,11 @@ secrets and picked up automatically by the `github` connector. Press `a`
 to run the assessment - it executes in a background thread and the result
 (CMM level, score, debt points) is recorded on the project and shown in
 the detail pane.
+
+Every scan is appended to the project's history (up to 50 kept). Press
+`h` to list all scans with per-scan trend arrows: score and debt changes
+between consecutive runs, where a positive delta is an improvement. The
+project detail pane also shows the trend versus the previous scan.
 
 Secrets render masked (`ghp••••••••xyz`); reveal and clipboard copy are
 explicit actions.

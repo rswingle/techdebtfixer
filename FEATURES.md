@@ -31,6 +31,11 @@ Implemented in this prototype (Python ≥3.10, stdlib only, zero dependencies):
   target id); `a` runs the full assessment pipeline in a background thread
   and records CMM level, score and debt points on the project; connector
   tokens are pulled from the project's encrypted secrets.
-- **Tests**: 49 stdlib `unittest` tests covering scoring, credentials,
+- **Scan history and trends** — every assessment is appended to the
+  project's encrypted history (50 kept); `h` lists all scans with per-scan
+  trend arrows, and the detail pane shows the delta versus the previous run.
+- **CI** — GitHub Actions runs the suite on Linux and macOS across Python
+  3.10/3.12/3.14 plus CLI smoke checks.
+- **Tests**: 53 stdlib `unittest` tests covering scoring, credentials,
   roadmap ordering, registry, a full demo end-to-end run, the vault and
   headless TUI flows.

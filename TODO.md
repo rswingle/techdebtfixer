@@ -1,7 +1,7 @@
 # TODO
 
-- [ ] Vault TUI: scan history per project (keep multiple ScanRecords);
-  diff two scans to show posture trend; optional OS-keychain backend.
+- [ ] Vault TUI: optional OS-keychain backend; posture chart in the
+  history view (score over time); scheduled re-scan reminders.
 - [ ] GitHub connector: paginate beyond 100 repos; also check dependabot.yml,
   code scanning alerts and Actions workflow permissions.
 - [ ] Web connector: follow redirects and score cookie flags; check multiple

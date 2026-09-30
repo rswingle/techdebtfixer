@@ -27,6 +27,7 @@ from techdebtfixer.vault import (
     ScanRecord,
     Vault,
     VaultError,
+    diff_scans,
     rotation_report,
     rotation_status,
 )
@@ -122,6 +123,61 @@ class ConfirmModal(ModalScreen[bool]):
 
     def action_no(self) -> None:
         self.dismiss(False)
+
+
+class ScanHistoryScreen(ModalScreen[None]):
+    """Full-screen list of a project's past assessments with trend arrows."""
+
+    BINDINGS = [
+        Binding("escape", "close", "Close"),
+        Binding("q", "close", "Close", show=False),
+    ]
+
+    def __init__(self, project_name: str,
+                 history: list[ScanRecord]) -> None:
+        super().__init__()
+        self._project_name = project_name
+        self._history = history
+
+    @staticmethod
+    def _arrow(delta: float) -> str:
+        if delta > 0:
+            return "[green]▲[/green]"
+        if delta < 0:
+            return "[red]▼[/red]"
+        return "·"
+
+    def compose(self) -> ComposeResult:
+        lines: list[str] = [
+            f"[b]Scan history - {self._project_name}[/b]", ""
+        ]
+        history = self._history
+        if not history:
+            lines.append("No scans recorded yet. Select the project and press a.")
+        for i, scan in enumerate(history):
+            trend = ""
+            if i > 0:
+                d = diff_scans(history[i - 1], scan)
+                trend = (
+                    f"  {self._arrow(d['score_delta'])} "
+                    f"score {d['score_delta']:+.1f}, "
+                    f"{self._arrow(d['debt_delta'])} debt {d['debt_delta']:+d}"
+                )
+            lines.append(
+                f"{scan.at}  {scan.connector:6} {scan.target}\n"
+                f"    CMM L{scan.cmm_level} {scan.cmm_name} - "
+                f"score {scan.score}/100, debt {scan.debt_points} pts"
+                f"{trend}"
+            )
+        yield Vertical(
+            Label("esc closes", classes="hint"),
+            VerticalScroll(Static("\n".join(lines), id="history-text"),
+                          id="history-scroll"),
+            classes="scan-box",
+        )
+
+    def action_close(self) -> None:
+        self.dismiss(None)
 
 
 class ScanScreen(ModalScreen[None]):
@@ -318,6 +374,7 @@ class VaultTui(App[None]):
         Binding("r", "mark_rotated", "Rotated"),
         Binding("a", "run_assessment", "Assess"),
         Binding("t", "set_target", "Set target"),
+        Binding("h", "scan_history", "History"),
         Binding("d", "delete", "Delete"),
         Binding("l", "lock", "Lock vault"),
         Binding("?", "help", "Help"),
@@ -532,9 +589,16 @@ class VaultTui(App[None]):
             ]
             if scan.summary:
                 lines.append(f"  {scan.summary}")
+            if len(project.scan_history) >= 2:
+                d = diff_scans(project.scan_history[-2], project.scan_history[-1])
+                lines.append(
+                    f"  trend vs previous: {d['score_delta']:+.1f} score, "
+                    f"{d['debt_delta']:+d} debt"
+                )
+            lines.append(f"  scans recorded: {len(project.scan_history)}")
         lines += [
             "",
-            "a assess · t set target · s new secret · d delete project",
+            "a assess · t set target · h history · s new secret · d delete",
         ]
         self._detail.update("\n".join(lines))
 
@@ -777,6 +841,16 @@ class VaultTui(App[None]):
 
         self.push_screen(FormModal(f"Scan target for '{project.name}'", fields,
                                    submit))
+
+    def action_scan_history(self) -> None:
+        if not self._require_unlocked():
+            return
+        located = self._current_project()
+        if located is None:
+            return
+        client_id, project_id = located
+        project = self.vault.get_project(client_id, project_id)
+        self.push_screen(ScanHistoryScreen(project.name, project.scan_history))
 
     def action_run_assessment(self) -> None:
         if not self._require_unlocked():

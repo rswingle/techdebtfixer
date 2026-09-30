@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from techdebtfixer.vault import Vault, VaultError
+from techdebtfixer.vault import ScanRecord, Vault, VaultError
 
 try:
     import textual  # noqa: F401
@@ -181,6 +181,70 @@ class AssessmentFlowTests(_AsyncCase):
             self.assertEqual(scan.connector, "demo")
             self.assertEqual(scan.target, "demo-org")
             self.assertTrue(1 <= scan.cmm_level <= 5)
+
+    async def test_scan_history_screen_shows_trend(self) -> None:
+        from datetime import datetime, timedelta, timezone
+        from textual.widgets import Button
+
+        vault = Vault(self.vault_path)
+        vault.create("pw")
+        client = vault.add_client("Acme")
+        project = vault.add_project(client.id, "Core API")
+        vault.set_project_scan_config(client.id, project.id, "demo", "demo-org")
+        base = datetime.now(timezone.utc)
+        for i, (score, debt) in enumerate(((41.2, 95), (55.0, 60))):
+            vault.record_scan_result(
+                client.id, project.id,
+                ScanRecord(
+                    at=(base + timedelta(hours=i)).isoformat(timespec="seconds"),
+                    connector="demo", target="demo-org",
+                    cmm_level=2 if i == 0 else 3,
+                    cmm_name="Managed" if i == 0 else "Defined",
+                    score=score, debt_points=debt,
+                ),
+            )
+        vault.lock()
+
+        app = VaultTui(Vault(self.vault_path))
+        self.addCleanup(app._shutdown)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            screen = app.screen
+            screen.query_one("#pw1", Input).value = "pw"
+            screen.query_one("#go-btn").press()
+            await pilot.pause()
+
+            tree = app.query_one("#client-tree")
+            def find(node, text):
+                for child in node.children:
+                    if text in str(child.label):
+                        return child
+                    found = find(child, text)
+                    if found:
+                        return found
+                return None
+            tree.select_node(find(tree.root, "Core API"))
+            await pilot.pause()
+
+            # Detail pane shows the trend line.
+            detail = str(app.query_one("#detail").render())
+            self.assertIn("trend vs previous", detail)
+            self.assertIn("scans recorded: 2", detail)
+
+            # History screen lists both scans with the trend arrow.
+            from techdebtfixer.tui import ScanHistoryScreen
+
+            app.action_scan_history()
+            for _ in range(20):  # wait for the push to install + compose
+                await pilot.pause()
+                if isinstance(app.screen, ScanHistoryScreen):
+                    break
+            self.assertIsInstance(app.screen, ScanHistoryScreen)
+            history_text = str(app.screen.query_one("#history-text").render())
+            self.assertIn("Scan history - Core API", history_text)
+            self.assertIn("▲", history_text)
+            self.assertIn("score +13.8", history_text)
+            self.assertIn("CMM L3", history_text)
 
     async def test_assess_without_target_warns(self) -> None:
         vault = Vault(self.vault_path)

@@ -132,6 +132,24 @@ class ScanRecord:
         )
 
 
+# Maximum scan records kept per project (oldest dropped).
+SCAN_HISTORY_LIMIT = 50
+
+
+def diff_scans(older: ScanRecord, newer: ScanRecord) -> dict[str, float]:
+    """Trend between two scans; positive numbers are improvements.
+
+    score_delta  : posture score change (e.g. +4.5)
+    debt_delta   : debt points change, negated so a decrease is positive
+    level_delta  : CMM level change (e.g. +1)
+    """
+    return {
+        "score_delta": round(newer.score - older.score, 1),
+        "debt_delta": older.debt_points - newer.debt_points,
+        "level_delta": newer.cmm_level - older.cmm_level,
+    }
+
+
 @dataclass
 class Project:
     """A client project: an assessment target plus its own secrets."""
@@ -141,8 +159,12 @@ class Project:
     secrets: dict[str, SecretEntry] = field(default_factory=dict)
     connector: str = ""  # demo | github | local | web; empty = not configured
     target: str = ""  # org name, hostname, or filesystem path
-    last_scan: ScanRecord | None = None
+    scan_history: list[ScanRecord] = field(default_factory=list)  # oldest first
     created_at: str = field(default_factory=_now)
+
+    @property
+    def last_scan(self) -> ScanRecord | None:
+        return self.scan_history[-1] if self.scan_history else None
 
     def to_dict(self) -> dict[str, Any]:
         out = {
@@ -151,25 +173,30 @@ class Project:
             "created_at": self.created_at,
             "connector": self.connector,
             "target": self.target,
+            "scan_history": [s.to_dict() for s in self.scan_history],
             "secrets": {sid: s.to_dict() for sid, s in self.secrets.items()},
         }
-        if self.last_scan is not None:
-            out["last_scan"] = self.last_scan.to_dict()
         return out
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Project:
-        last_scan = data.get("last_scan")
+        history: list[ScanRecord] = [
+            ScanRecord.from_dict(sd)
+            for sd in data.get("scan_history", [])
+            if isinstance(sd, dict)
+        ]
+        if not history:
+            # Vault files written before scan history existed.
+            legacy = data.get("last_scan")
+            if isinstance(legacy, dict):
+                history = [ScanRecord.from_dict(legacy)]
         return cls(
             id=str(data["id"]),
             name=str(data["name"]),
             created_at=str(data.get("created_at", _now())),
             connector=str(data.get("connector", "")),
             target=str(data.get("target", "")),
-            last_scan=(
-                ScanRecord.from_dict(last_scan) if isinstance(last_scan, dict)
-                else None
-            ),
+            scan_history=history,
             secrets={
                 sid: SecretEntry.from_dict(sd)
                 for sid, sd in data.get("secrets", {}).items()
@@ -496,8 +523,13 @@ class Vault:
     def record_scan_result(
         self, client_id: str, project_id: str, scan: ScanRecord
     ) -> None:
-        """Store the outcome of a completed assessment run."""
-        self.get_project(client_id, project_id).last_scan = scan
+        """Append a completed assessment to the project's scan history."""
+        project = self.get_project(client_id, project_id)
+        project.scan_history.append(scan)
+        if len(project.scan_history) > SCAN_HISTORY_LIMIT:
+            del project.scan_history[
+                : len(project.scan_history) - SCAN_HISTORY_LIMIT
+            ]
         self.save()
 
     def delete_project(self, client_id: str, project_id: str) -> None:

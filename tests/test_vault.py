@@ -13,6 +13,7 @@ from techdebtfixer.vault import (
     ScanRecord,
     Vault,
     VaultError,
+    diff_scans,
     rotation_report,
     rotation_status,
 )
@@ -278,6 +279,52 @@ class ProjectScanConfigTests(unittest.TestCase):
         self.assertEqual(rebuilt.connector, "")
         self.assertEqual(rebuilt.target, "")
         self.assertIsNone(rebuilt.last_scan)
+
+    def _scan(self, score: float, debt: int, level: int = 2,
+              at: str = "2026-09-29T12:00:00+00:00") -> ScanRecord:
+        return ScanRecord(
+            at=at, connector="demo", target="demo-org", cmm_level=level,
+            cmm_name="Managed", score=score, debt_points=debt,
+        )
+
+    def test_scan_history_appends_and_caps(self) -> None:
+        from techdebtfixer.vault import SCAN_HISTORY_LIMIT
+
+        for i in range(SCAN_HISTORY_LIMIT + 5):
+            self.vault.record_scan_result(
+                self.client.id, self.project.id, self._scan(10.0 + i, 100 - i)
+            )
+        project = self.vault.get_project(self.client.id, self.project.id)
+        self.assertEqual(len(project.scan_history), SCAN_HISTORY_LIMIT)
+        self.assertEqual(project.scan_history[0].score, 10.0 + 5)  # oldest kept
+        self.assertEqual(project.scan_history[-1].score, 10.0 + 54)
+        self.assertEqual(project.last_scan.score, 10.0 + 54)
+
+    def test_legacy_last_scan_dict_migrates_into_history(self) -> None:
+        self.vault.set_project_scan_config(
+            self.client.id, self.project.id, "demo", "demo-org"
+        )
+        scan = self._scan(41.2, 95)
+        self.vault.record_scan_result(self.client.id, self.project.id, scan)
+        raw = self.project.to_dict()
+        # Simulate the pre-history on-disk format.
+        raw["last_scan"] = raw["scan_history"][-1]
+        del raw["scan_history"]
+        rebuilt = Project.from_dict(raw)
+        self.assertEqual(len(rebuilt.scan_history), 1)
+        self.assertEqual(rebuilt.last_scan.score, 41.2)
+
+    def test_diff_scans_positive_is_improvement(self) -> None:
+        older = self._scan(41.2, 95, level=2)
+        newer = self._scan(55.0, 60, level=3, at="2026-09-30T09:00:00+00:00")
+        d = diff_scans(older, newer)
+        self.assertEqual(d["score_delta"], 13.8)
+        self.assertEqual(d["debt_delta"], 35)  # debt went down -> positive
+        self.assertEqual(d["level_delta"], 1)
+        worse = diff_scans(newer, older)
+        self.assertEqual(worse["score_delta"], -13.8)
+        self.assertEqual(worse["debt_delta"], -35)
+        self.assertEqual(worse["level_delta"], -1)
 
 
 class TuiImportTests(unittest.TestCase):
