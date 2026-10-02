@@ -19,7 +19,7 @@ except ImportError:  # pragma: no cover
 if HAS_TEXTUAL:
     from textual.widgets import Input, Tree
 
-    from techdebtfixer.tui import UnlockScreen, VaultTui
+    from techdebtfixer.tui import UnlockScreen, VaultTui, sparkline
 
 
 class _AsyncCase(unittest.IsolatedAsyncioTestCase):
@@ -121,6 +121,24 @@ class LockedFlowTests(_AsyncCase):
             await pilot.pause()
             self.assertFalse(app.vault.unlocked)
             self.assertIsInstance(app.screen, UnlockScreen)
+
+
+@unittest.skipUnless(HAS_TEXTUAL, "textual not installed")
+class SparklineTests(unittest.TestCase):
+    def test_empty(self) -> None:
+        self.assertEqual(sparkline([]), "")
+
+    def test_single_and_bounds(self) -> None:
+        self.assertEqual(sparkline([0.0]), "▁")
+        self.assertEqual(sparkline([100.0]), "█")
+        self.assertEqual(sparkline([50.0]), "▅")  # 3.5 rounds to even (4)
+
+    def test_clamps_out_of_range(self) -> None:
+        self.assertEqual(sparkline([-10.0, 110.0]), "▁█")
+
+    def test_rising_trend_renders_rising_bars(self) -> None:
+        bars = sparkline([10.0, 50.0, 90.0])
+        self.assertEqual(bars, "▂▅▇")
 
 
 @unittest.skipUnless(HAS_TEXTUAL, "textual not installed")
@@ -245,6 +263,8 @@ class AssessmentFlowTests(_AsyncCase):
             self.assertIn("▲", history_text)
             self.assertIn("score +13.8", history_text)
             self.assertIn("CMM L3", history_text)
+            self.assertIn("score over time", history_text)
+            self.assertIn("▄▅", history_text)  # sparkline: 41.2->▄, 55.0->▅
 
     async def test_assess_without_target_warns(self) -> None:
         vault = Vault(self.vault_path)

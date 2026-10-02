@@ -125,6 +125,23 @@ class ConfirmModal(ModalScreen[bool]):
         self.dismiss(False)
 
 
+# Block glyphs for the score sparkline, indexed by 0..8 intensity.
+_SPARK = "▁▂▃▄▅▆▇█"
+
+
+def sparkline(values: list[float], low: float = 0.0, high: float = 100.0) -> str:
+    """Render a one-line bar chart of scores, oldest to newest."""
+    if not values:
+        return ""
+    span = max(high - low, 0.0001)
+    out = []
+    for v in values:
+        clamped = max(low, min(high, v))
+        idx = int(round((clamped - low) / span * (len(_SPARK) - 1)))
+        out.append(_SPARK[idx])
+    return "".join(out)
+
+
 class ScanHistoryScreen(ModalScreen[None]):
     """Full-screen list of a project's past assessments with trend arrows."""
 
@@ -154,6 +171,15 @@ class ScanHistoryScreen(ModalScreen[None]):
         history = self._history
         if not history:
             lines.append("No scans recorded yet. Select the project and press a.")
+        else:
+            scores = [s.score for s in history]
+            lines.append(
+                "[b]score over time[/b]  "
+                f"{sparkline(scores)}  "
+                f"low {min(scores):.0f} → high {max(scores):.0f} "
+                f"({len(scores)} scans)"
+            )
+            lines.append("")
         for i, scan in enumerate(history):
             trend = ""
             if i > 0:
