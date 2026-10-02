@@ -1,5 +1,7 @@
 # techdebtfixer
 
+[![CI](https://github.com/rswingle/techdebtfixer/actions/workflows/ci.yml/badge.svg)](https://github.com/rswingle/techdebtfixer/actions/workflows/ci.yml)
+
 A zero-dependency Python CLI that logs in to a client's environment with
 credentials they provide, reviews its security posture and technical debt,
 places the organization on the Common Maturity Model (CMM), and produces a
